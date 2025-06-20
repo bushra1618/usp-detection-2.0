@@ -11,7 +11,7 @@ import platform
 sns.set(style='whitegrid')
 plt.rcParams["figure.figsize"] = (10, 6)
 
-SECTOR = 70  # <-- Change this to the latest available sector if needed
+SECTOR = 70  # <-- 
 MIN_PERIOD = 0.05  # 1.2 hours
 MAX_PERIOD = 1.0   # 24 hours
 BIN_FACTOR = 5
