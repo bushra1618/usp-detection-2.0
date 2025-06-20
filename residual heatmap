@@ -1,0 +1,107 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from lightkurve import search_lightcurve
+import os
+import platform
+
+sns.set(style='whitegrid')
+plt.rcParams["figure.figsize"] = (10, 6)
+
+target = "TIC 260004324"
+sector = 1
+period = 3.814
+t0 = 1325.5
+window = 0.5
+nphase_bins = 100
+
+plot_folder = "transit_residuals"
+os.makedirs(plot_folder, exist_ok=True)
+
+print(" Downloading light curve...")
+search_result = search_lightcurve(target, mission="TESS", sector=sector, author="SPOC")
+if not search_result:
+    raise Exception(" No light curve found.")
+
+lc = search_result.download_all().stitch().remove_nans().remove_outliers(sigma=5)
+lc = lc.normalize()
+
+# Convert to pure NumPy
+time = np.asarray(lc.time.value, dtype=float)
+flux = np.asarray(lc.flux, dtype=float)
+
+# Extract all transits into phase bins
+n_orbits = int((time[-1] - time[0]) / period)
+phased_fluxes = []
+
+for i in range(n_orbits):
+    t_center = t0 + i * period
+    mask = np.abs(time - t_center) < (window * period)
+    if np.sum(mask) < 30:
+        continue
+
+    phase = (time[mask] - t_center) / period
+    f = flux[mask]
+
+    phase = np.asarray(phase, dtype=float)
+    f = np.asarray(f, dtype=float)
+
+    valid_mask = np.isfinite(phase) & np.isfinite(f)
+    if np.sum(valid_mask) < 10:
+        continue
+
+    bins = np.linspace(-window, window, nphase_bins)
+    interp_flux = np.interp(bins, phase[valid_mask], f[valid_mask])
+    phased_fluxes.append(interp_flux)
+
+phased_fluxes = np.array(phased_fluxes)
+
+
+median_transit = np.nanmedian(phased_fluxes, axis=0)
+
+# --- Step 2: Subtract from each transit to get residuals --- #
+residuals = phased_fluxes - median_transit
+
+
+plt.figure(figsize=(10, 6))
+vmin = np.nanpercentile(residuals, 5)
+vmax = np.nanpercentile(residuals, 95)
+
+plt.imshow(residuals, aspect='auto', cmap='coolwarm',
+           extent=[-window, window, 0, residuals.shape[0]],
+           origin='lower', interpolation='none', vmin=vmin, vmax=vmax)
+
+plt.colorbar(label='Residual Flux (normalized)')
+plt.xlabel("Orbital Phase (cycles from mid-transit)")
+plt.ylabel("Transit Number")
+plt.title("Residuals After Median Transit Subtraction")
+plt.tight_layout()
+plt.savefig(f"{plot_folder}/residuals_heatmap.png")
+plt.close()
+print(" Residual heatmap saved!")
+
+# --- Step 4: Overplot all residuals as lines --- #
+plt.figure(figsize=(10, 6))
+bins = np.linspace(-window, window, nphase_bins)
+for row in residuals:
+    plt.plot(bins, row, color='gray', alpha=0.2)
+
+plt.plot(bins, np.nanmean(residuals, axis=0), 'r-', label='Mean Residual')
+plt.axhline(0, color='black', linestyle='--', alpha=0.5)
+plt.xlabel("Orbital Phase")
+plt.ylabel("Residual Flux")
+plt.title("All Residuals Overlayed")
+plt.legend()
+plt.tight_layout()
+plt.savefig(f"{plot_folder}/residuals_overlayed.png")
+plt.close()
+print(" Residual overlay plot saved!")
+
+
+print(" Opening folder...")
+if platform.system() == "Windows":
+    os.startfile(plot_folder)
+else:
+    print(f" Please check the folder: {os.path.abspath(plot_folder)}")
+
+print("\n Residual transit analysis complete.")
